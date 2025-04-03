@@ -50,10 +50,10 @@ function aStar(terrainLayer, start, goal, scaleFactor) {
 }
 function secondsToDateTimeStr(seconds) {
     const days = Math.floor(seconds / 86400);
-    const years = 2024 + Math.floor(days / (12 * 31));
+    const years = 2025 + Math.floor(days / (12 * 31));
     const months = Math.floor((days / 31) % 12) + 1;
     const dayOfMonth = (days % 31) + 1;
-    const dayOfWeek = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][days % 7];
+    const dayOfWeek = ["Domingo", "Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado"][days % 7];
     const hours = Math.floor((seconds % 86400) / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
