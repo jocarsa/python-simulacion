@@ -3,6 +3,7 @@
 // Canvas and context setup
 const backgroundCanvas = document.getElementById('backgroundCanvas');
 const backgroundCtx = backgroundCanvas.getContext('2d');
+backgroundCtx.imageSmoothingEnabled = false;
 const playersCanvas = document.getElementById('playersCanvas');
 const playersCtx = playersCanvas.getContext('2d');
 const statsDiv = document.getElementById('stats');
@@ -11,7 +12,7 @@ const pieChartCanvas = document.getElementById('pieChart');
 const pieChartCtx = pieChartCanvas.getContext('2d');
 
 const scaleFactor = 1;
-const numAgents = 500;
+const numAgents = 100;
 let currentTimeSeconds = 0;
 const timeStepSeconds = 20;
 let terrainLayer = [];
@@ -20,6 +21,18 @@ let terrainLayer = [];
 let savedStateFromServer = null;
 let npcWorkers = [];
 let npcStates = {};
+
+// Global variable to store the agent to follow (0 means no follow)
+let followAgentIndex = 0;
+let zoomfactor = 4;
+
+// Listen for changes in the input element.
+document.getElementById('agentSelector').addEventListener('input', (e) => {
+    followAgentIndex = parseInt(e.target.value);
+});
+document.getElementById('zoomfactor').onchange = function(e){
+	zoomfactor = parseInt(e.target.value);
+}
 
 // Create an Image object for the map
 const mapa = new Image();
@@ -80,7 +93,7 @@ mapa.onload = function() {
     playersCanvas.width = mapa.width;
     playersCanvas.height = mapa.height;
     
-    // Draw the map image on the background canvas.
+    // Initially draw the map image on the background canvas.
     backgroundCtx.drawImage(mapa, 0, 0);
     
     // Build the terrainLayer matrix from the image data.
@@ -227,12 +240,67 @@ function update() {
     currentTimeSeconds = (currentTimeSeconds + timeStepSeconds) % (12 * 31 * 86400);
 }
 
-// Draw each NPC's current position on the players canvas.
+// Draw function updates both background and players canvases.
 function draw() {
-    Object.values(npcStates).forEach(state => {
-        playersCtx.fillStyle = 'black';
-        playersCtx.fillRect(state.position[1] * scaleFactor, state.position[0] * scaleFactor, scaleFactor, scaleFactor);
-    });
+    // --- Draw Background Canvas ---
+    backgroundCtx.setTransform(1, 0, 0, 1, 0, 0);
+    backgroundCtx.clearRect(0, 0, backgroundCanvas.width, backgroundCanvas.height);
+
+    if (followAgentIndex === 0) {
+        // No following; draw map normally.
+        backgroundCtx.drawImage(mapa, 0, 0);
+    } else {
+        const agentId = followAgentIndex - 1;
+        const agentState = npcStates[agentId];
+        backgroundCtx.save();
+        const zoomFactor = zoomfactor;
+        const canvasCenterX = backgroundCanvas.width / 2;
+        const canvasCenterY = backgroundCanvas.height / 2;
+        if (agentState) {
+            const agentWorldX = agentState.position[1] * scaleFactor;
+            const agentWorldY = agentState.position[0] * scaleFactor;
+            backgroundCtx.translate(canvasCenterX, canvasCenterY);
+            backgroundCtx.scale(zoomFactor, zoomFactor);
+            backgroundCtx.translate(-agentWorldX, -agentWorldY);
+        }
+        backgroundCtx.drawImage(mapa, 0, 0);
+        backgroundCtx.restore();
+    }
+
+    // --- Draw Players Canvas ---
+    playersCtx.setTransform(1, 0, 0, 1, 0, 0);
+    playersCtx.clearRect(0, 0, playersCanvas.width, playersCanvas.height);
+    if (followAgentIndex === 0) {
+        Object.values(npcStates).forEach(state => {
+            playersCtx.fillStyle = 'black';
+            playersCtx.fillRect(state.position[1] * scaleFactor, state.position[0] * scaleFactor, scaleFactor, scaleFactor);
+        });
+    } else {
+        const agentId = followAgentIndex - 1;
+        const agentState = npcStates[agentId];
+        if (agentState) {
+            playersCtx.save();
+            const zoomFactor = 4;
+            const canvasCenterX = playersCanvas.width / 2;
+            const canvasCenterY = playersCanvas.height / 2;
+            const agentWorldX = agentState.position[1] * scaleFactor;
+            const agentWorldY = agentState.position[0] * scaleFactor;
+            playersCtx.translate(canvasCenterX, canvasCenterY);
+            playersCtx.scale(zoomFactor, zoomFactor);
+            playersCtx.translate(-agentWorldX, -agentWorldY);
+            Object.values(npcStates).forEach(state => {
+                playersCtx.fillStyle = 'black';
+                playersCtx.fillRect(state.position[1] * scaleFactor, state.position[0] * scaleFactor, scaleFactor, scaleFactor);
+            });
+            playersCtx.restore();
+        } else {
+            // Fallback to normal drawing if the selected agent is not found.
+            Object.values(npcStates).forEach(state => {
+                playersCtx.fillStyle = 'black';
+                playersCtx.fillRect(state.position[1] * scaleFactor, state.position[0] * scaleFactor, scaleFactor, scaleFactor);
+            });
+        }
+    }
 }
 
 // Clear the NPC canvas periodically to reduce trail buildup.
