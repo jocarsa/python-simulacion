@@ -11,7 +11,7 @@ const pieChartCanvas = document.getElementById('pieChart');
 const pieChartCtx = pieChartCanvas.getContext('2d');
 
 const scaleFactor = 1;
-const numAgents = 100;
+const numAgents = 500;
 let currentTimeSeconds = 0;
 const timeStepSeconds = 20;
 let terrainLayer = [];
@@ -32,20 +32,20 @@ mapa.src = "casas.png";
 // Load state from the server (GET request)
 function loadStateFromServer() {
     return fetch('npc_endpoint.php')
-    .then(response => response.json())
-    .then(data => {
-        if (data.npcStates && data.currentTimeSeconds !== undefined) {
-            savedStateFromServer = data;
-            npcStates = data.npcStates;
-            currentTimeSeconds = data.currentTimeSeconds;
-            console.log('Loaded state from server:', data);
-        } else {
-            console.log('No saved state on server; starting fresh.');
-        }
-    })
-    .catch(error => {
-        console.error('Error loading state:', error);
-    });
+        .then(response => response.json())
+        .then(data => {
+            if (data.npcStates && data.currentTimeSeconds !== undefined) {
+                savedStateFromServer = data;
+                npcStates = data.npcStates;
+                currentTimeSeconds = data.currentTimeSeconds;
+                console.log('Loaded state from server:', data);
+            } else {
+                console.log('No saved state on server; starting fresh.');
+            }
+        })
+        .catch(error => {
+            console.error('Error loading state:', error);
+        });
 }
 
 // Save state to the server (POST request)
@@ -61,11 +61,12 @@ function saveStateToServer() {
         },
         body: JSON.stringify(stateToSave)
     })
-    .then(response => response.json())
-    .then(function(data){
-    //console.log('Saved state:', data)
-    })
-    .catch(error => console.error('Error saving state:', error));
+        .then(response => response.json())
+        .then(function(data) {
+            // Uncomment to log successful save
+            // console.log('Saved state:', data);
+        })
+        .catch(error => console.error('Error saving state:', error));
 }
 
 // ----------------------
@@ -105,7 +106,8 @@ mapa.onload = function() {
         }
         terrainLayer.push(row);
     }
-    
+    console.log("Terrain layer built:", terrainLayer);
+
     // Load any saved state from the server, then initialize agents and start the game loop.
     loadStateFromServer().then(() => {
         initializeAgents();
@@ -118,10 +120,10 @@ mapa.onload = function() {
 // ----------------------
 
 function initializeAgents() {
-    // Use saved state from the server if available.
-    const savedStates = (savedStateFromServer && savedStateFromServer.npcStates) ? savedStateFromServer.npcStates : null;
-    // currentTimeSeconds has already been set if a saved state was loaded.
-    
+    // Determine number of workers based on available cores (with a fallback value).
+    const numCores = navigator.hardwareConcurrency || 4;
+    const agentsPerWorker = Math.ceil(numAgents / numCores);
+
     // Build arrays for different terrain positions.
     const walkablePositions = [];
     const bedPositions = [];
@@ -138,10 +140,19 @@ function initializeAgents() {
         }
     }
 
+    // Check that the required position arrays have data.
+    if (!walkablePositions.length || !bedPositions.length || !workPositions.length || !foodPositions.length) {
+        console.error("One or more terrain positions arrays are empty. Check your map image and color detection.");
+        return;
+    }
+
     npcWorkers = [];
-    // If there is a saved state, use it; otherwise start with an empty object.
+    // Use saved state if available.
+    const savedStates = (savedStateFromServer && savedStateFromServer.npcStates) ? savedStateFromServer.npcStates : {};
     npcStates = savedStates ? savedStates : {};
 
+    // Build a complete list of agent initialization data.
+    let allAgentsData = [];
     for (let i = 0; i < numAgents; i++) {
         let initData;
         if (savedStates && savedStates[i]) {
@@ -163,19 +174,41 @@ function initializeAgents() {
                 foodPosition: foodPositions[Math.floor(Math.random() * foodPositions.length)]
             };
         }
+        allAgentsData.push(initData);
+    }
+    console.log(`Total agents to initialize: ${allAgentsData.length}`);
 
+    // Partition the agents among the available workers.
+    for (let w = 0; w < numCores; w++) {
+        const start = w * agentsPerWorker;
+        if (start >= numAgents) break; // Only create a worker if there are agents to process.
+        const end = Math.min(start + agentsPerWorker, numAgents);
+        console.log(`Initializing worker ${w}: Agents ${start} to ${end - 1}`);
+        const agentsDataForWorker = allAgentsData.slice(start, end);
+        if (agentsDataForWorker.length === 0) {
+            console.log(`Worker ${w} has no agents, skipping.`);
+            continue;
+        }
         const worker = new Worker('npcWorker.js');
+        
+        // Send initial data to each worker.
         worker.postMessage({
             type: 'init',
-            agentData: initData,
+            agentsData: agentsDataForWorker,
             terrainLayer: terrainLayer,
             scaleFactor: scaleFactor
         });
 
-        // Update the global npcStates object when a worker sends a message.
+        // Update the global npcStates when a worker returns its data.
         worker.onmessage = function(e) {
-            const data = e.data;
-            npcStates[data.id] = data;
+            const statesArray = e.data.states;
+            if (statesArray && statesArray.length) {
+                statesArray.forEach(state => {
+                    npcStates[state.id] = state;
+                });
+                // Debug log to check received states.
+                //console.log(`Worker updated states:`, statesArray);
+            }
         };
 
         npcWorkers.push(worker);
@@ -186,7 +219,7 @@ function initializeAgents() {
 // Update, Draw and Loop
 // ----------------------
 
-// Update all NPCs by sending them an update message.
+// Broadcast update message to all workers.
 function update() {
     npcWorkers.forEach(worker => {
         worker.postMessage({ type: 'update', currentTimeSeconds: currentTimeSeconds });
@@ -202,11 +235,10 @@ function draw() {
     });
 }
 
-// Clear the NPC canvas once per second to reduce trail buildup.
+// Clear the NPC canvas periodically to reduce trail buildup.
 setInterval(() => {
     playersCtx.fillStyle = "rgba(255,255,255,0.1)";
     playersCtx.fillRect(0, 0, playersCanvas.width, playersCanvas.height);
-    //console.log(Object.values(npcStates));
 }, 1000);
 
 // Update statistics display.
